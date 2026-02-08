@@ -1,0 +1,9 @@
+node_modules/
+.env
+*.zip
+restaurants-dynamodb.json
+restaurants-opensearch.json
+.DS_Store
+SETUP_GUIDE.md
+package-lock.json
+--start-time -s000 
