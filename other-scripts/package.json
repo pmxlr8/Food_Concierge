@@ -1,0 +1,13 @@
+{
+  "name": "dining-concierge-scripts",
+  "version": "1.0.0",
+  "description": "Yelp scraper and OpenSearch upload scripts for Dining Concierge Chatbot",
+  "scripts": {
+    "scrape": "node yelp-scraper.js",
+    "upload-opensearch": "node opensearch-bulk-upload.js",
+    "scrape-and-upload": "node yelp-scraper.js && node opensearch-bulk-upload.js"
+  },
+  "dependencies": {
+    "@aws-sdk/client-dynamodb": "^3.500.0"
+  }
+}
