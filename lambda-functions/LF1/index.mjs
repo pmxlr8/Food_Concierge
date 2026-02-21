@@ -78,7 +78,8 @@ export const handler = async (event) => {
     if (intentName === "ThankYouIntent") {
       return buildFulfillmentResponse(
         event,
-        "You're welcome! Enjoy your meal. 😊"
+        "You're welcome! If you want to search again, just say " +
+        "\"find me a restaurant\" anytime. Enjoy your meal! 😊"
       );
     }
 
@@ -95,8 +96,9 @@ export const handler = async (event) => {
     // ---- FallbackIntent or unknown ----
     return buildFulfillmentResponse(
       event,
-      "I'm not sure I understood that. You can say \"find me a restaurant\" " +
-      "or \"I want to eat\" to get dining suggestions."
+      "I'm not sure I understood that. I can help you find restaurant suggestions — " +
+      "just say something like \"I want to eat\" or \"find me a restaurant\". " +
+      "If you already made a request, I can't modify it, but you can start a new one!"
     );
   } catch (err) {
     // Catch-all – never let the Lambda crash ungracefully
@@ -214,8 +216,8 @@ function handleDialogValidation(event, slots, sessionAttrs) {
         "I couldn't parse that time. Try something like \"7 pm\" or \"19:30\"."
       );
     }
-    // Check if time is reasonable (e.g., not 3 AM)
-    const [hours] = diningTime.split(":").map(Number);
+    const [hours, minutes] = diningTime.split(":").map(Number);
+    // Check if time is reasonable (not 3 AM)
     if (hours < 6 || hours > 23) {
       return buildElicitSlotResponse(
         event,
@@ -223,6 +225,23 @@ function handleDialogValidation(event, slots, sessionAttrs) {
         "Most restaurants are open between 6 AM and 11 PM. " +
         "Could you pick a time in that range?"
       );
+    }
+    // If date is today, reject times that have already passed
+    if (diningDate) {
+      const now = new Date();
+      const todayStr = now.toISOString().split("T")[0]; // "YYYY-MM-DD"
+      if (diningDate === todayStr) {
+        const nowHours = now.getHours();
+        const nowMinutes = now.getMinutes();
+        if (hours < nowHours || (hours === nowHours && minutes <= nowMinutes)) {
+          return buildElicitSlotResponse(
+            event,
+            "DiningTime",
+            `It's already past ${diningTime} today! Please pick a later time, ` +
+            `or choose a future date.`
+          );
+        }
+      }
     }
   }
 
