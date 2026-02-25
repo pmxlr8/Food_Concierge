@@ -16,7 +16,7 @@
  */
 
 import { SQSClient, SendMessageCommand } from "@aws-sdk/client-sqs";
-import { DynamoDBClient, GetItemCommand, PutItemCommand } from "@aws-sdk/client-dynamodb";
+import { DynamoDBClient, GetItemCommand, PutItemCommand, ScanCommand } from "@aws-sdk/client-dynamodb";
 
 const sqsClient = new SQSClient({ region: process.env.REGION || "us-east-1" });
 const dynamoClient = new DynamoDBClient({ region: process.env.REGION || "us-east-1" });
@@ -67,6 +67,53 @@ export const handler = async (event) => {
   try {
     // ---- Greeting ----
     if (intentName === "GreetingIntent") {
+      // Extra Credit: Check if this is a returning user with a previous search
+      try {
+        const scanResult = await dynamoClient.send(new ScanCommand({
+          TableName: "user-state",
+        }));
+        if (scanResult.Items && scanResult.Items.length > 0) {
+          // Find the most-recent entry by LastSearchTimestamp
+          const sorted = scanResult.Items.sort((a, b) =>
+            (b.LastSearchTimestamp?.S || "").localeCompare(a.LastSearchTimestamp?.S || "")
+          );
+          const prev = sorted[0];
+          const cuisine  = prev.Cuisine?.S;
+          const location = prev.Location?.S;
+          const email    = prev.Email?.S;
+          const people   = prev.NumberOfPeople?.S || "2";
+
+          if (cuisine && location && email) {
+            // Automatically push a fresh recommendation based on previous search
+            const nowET = new Date(new Date().toLocaleString("en-US", { timeZone: "America/New_York" }));
+            const todayStr = `${nowET.getFullYear()}-${String(nowET.getMonth()+1).padStart(2,"0")}-${String(nowET.getDate()).padStart(2,"0")}`;
+
+            await sqsClient.send(new SendMessageCommand({
+              QueueUrl: process.env.SQS_QUEUE_URL,
+              MessageBody: JSON.stringify({
+                Location: location,
+                Cuisine: cuisine.toLowerCase(),
+                NumberOfPeople: people,
+                DiningDate: todayStr,
+                DiningTime: "19:00",
+                Email: email,
+              }),
+            }));
+
+            const cuisineDisplay = cuisine.charAt(0).toUpperCase() + cuisine.slice(1).toLowerCase();
+            return buildFulfillmentResponse(
+              event,
+              `Welcome back! I remember you were looking for ${cuisineDisplay} food in ${location} last time. ` +
+              `I've sent fresh suggestions to ${email}! ` +
+              `If you'd like to search for something different, just say "find me a restaurant".`
+            );
+          }
+        }
+      } catch (err) {
+        console.warn("Extra credit returning-user check failed:", err.message);
+      }
+
+      // First-time user greeting
       return buildFulfillmentResponse(
         event,
         "Hi there! I can help you find restaurant suggestions. " +
@@ -172,9 +219,10 @@ function handleDialogValidation(event, slots, sessionAttrs) {
 
   // ---------- Dining Date ----------
   if (diningDate) {
-    // Lex resolves "today"→"2026-02-21", "tomorrow"→"2026-02-22", etc.
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
+    // Lex resolves "today"→"2026-02-25", "tomorrow"→"2026-02-26", etc.
+    // Use Eastern Time since our users are in NYC (Lambda runs in UTC)
+    const nowET = new Date(new Date().toLocaleString("en-US", { timeZone: "America/New_York" }));
+    const todayET = new Date(nowET.getFullYear(), nowET.getMonth(), nowET.getDate());
     const requested = new Date(diningDate + "T00:00:00");
 
     if (isNaN(requested.getTime())) {
@@ -185,7 +233,7 @@ function handleDialogValidation(event, slots, sessionAttrs) {
         "You can say \"today\", \"tomorrow\", or a date like \"March 5th\"."
       );
     }
-    if (requested < today) {
+    if (requested < todayET) {
       return buildElicitSlotResponse(
         event,
         "DiningDate",
@@ -193,8 +241,8 @@ function handleDialogValidation(event, slots, sessionAttrs) {
         `Please pick today or a future date.`
       );
     }
-    // Optional: warn if date is more than 90 days out
-    const maxFuture = new Date(today);
+    // Warn if date is more than 90 days out
+    const maxFuture = new Date(todayET);
     maxFuture.setDate(maxFuture.getDate() + 90);
     if (requested > maxFuture) {
       return buildElicitSlotResponse(
@@ -228,11 +276,11 @@ function handleDialogValidation(event, slots, sessionAttrs) {
     }
     // If date is today, reject times that have already passed
     if (diningDate) {
-      const now = new Date();
-      const todayStr = now.toISOString().split("T")[0]; // "YYYY-MM-DD"
-      if (diningDate === todayStr) {
-        const nowHours = now.getHours();
-        const nowMinutes = now.getMinutes();
+      const nowET = new Date(new Date().toLocaleString("en-US", { timeZone: "America/New_York" }));
+      const todayStrET = `${nowET.getFullYear()}-${String(nowET.getMonth()+1).padStart(2,"0")}-${String(nowET.getDate()).padStart(2,"0")}`;
+      if (diningDate === todayStrET) {
+        const nowHours = nowET.getHours();
+        const nowMinutes = nowET.getMinutes();
         if (hours < nowHours || (hours === nowHours && minutes <= nowMinutes)) {
           return buildElicitSlotResponse(
             event,
